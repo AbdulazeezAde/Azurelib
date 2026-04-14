@@ -148,9 +148,11 @@ function BookFormModal({ isOpen, onClose, onSave, editingBook }: { isOpen: boole
   });
   const [coverImage, setCoverImage] = useState<File | null>(null);
   const [bookFile, setBookFile] = useState<File | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (isOpen) {
+      setErrors({});
       fetch('/api/categories').then(res => res.json()).then(setCategories);
       if (editingBook) {
         setFormData({
@@ -180,8 +182,31 @@ function BookFormModal({ isOpen, onClose, onSave, editingBook }: { isOpen: boole
     }
   }, [isOpen, editingBook]);
 
+  const validate = () => {
+    const newErrors: Record<string, string> = {};
+    if (!formData.title.trim()) newErrors.title = 'Title is required';
+    else if (formData.title.length < 2) newErrors.title = 'Title must be at least 2 characters';
+
+    if (!formData.author.trim()) newErrors.author = 'Author is required';
+    else if (formData.author.length < 2) newErrors.author = 'Author must be at least 2 characters';
+
+    if (!formData.isbn.trim()) newErrors.isbn = 'ISBN is required';
+    else if (!/^(?=(?:\D*\d){10}(?:(?:\D*\d){3})?$)[\d-]+$/.test(formData.isbn)) newErrors.isbn = 'Invalid ISBN format (10 or 13 digits)';
+
+    if (!formData.category_id) newErrors.category_id = 'Please select a category';
+
+    if (!formData.description.trim()) newErrors.description = 'Description is required';
+    else if (formData.description.length < 10) newErrors.description = 'Description must be at least 10 characters';
+
+    if (formData.total_copies < 1) newErrors.total_copies = 'Total copies must be at least 1';
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!validate()) return;
     
     const data = new FormData();
     data.append('title', formData.title);
@@ -234,43 +259,85 @@ function BookFormModal({ isOpen, onClose, onSave, editingBook }: { isOpen: boole
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
-              <input required className="w-full px-3 py-2 border rounded-lg" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} />
+              <input 
+                className={`w-full px-3 py-2 border rounded-lg ${errors.title ? 'border-red-500' : 'border-gray-300'}`} 
+                value={formData.title} 
+                onChange={e => {
+                  setFormData({...formData, title: e.target.value});
+                  if (errors.title) setErrors({...errors, title: ''});
+                }} 
+              />
+              {errors.title && <p className="text-xs text-red-500 mt-1">{errors.title}</p>}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Author</label>
-              <input required className="w-full px-3 py-2 border rounded-lg" value={formData.author} onChange={e => setFormData({...formData, author: e.target.value})} />
+              <input 
+                className={`w-full px-3 py-2 border rounded-lg ${errors.author ? 'border-red-500' : 'border-gray-300'}`} 
+                value={formData.author} 
+                onChange={e => {
+                  setFormData({...formData, author: e.target.value});
+                  if (errors.author) setErrors({...errors, author: ''});
+                }} 
+              />
+              {errors.author && <p className="text-xs text-red-500 mt-1">{errors.author}</p>}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">ISBN</label>
-              <input required className="w-full px-3 py-2 border rounded-lg" value={formData.isbn} onChange={e => setFormData({...formData, isbn: e.target.value})} />
+              <input 
+                className={`w-full px-3 py-2 border rounded-lg ${errors.isbn ? 'border-red-500' : 'border-gray-300'}`} 
+                value={formData.isbn} 
+                onChange={e => {
+                  setFormData({...formData, isbn: e.target.value});
+                  if (errors.isbn) setErrors({...errors, isbn: ''});
+                }} 
+              />
+              {errors.isbn && <p className="text-xs text-red-500 mt-1">{errors.isbn}</p>}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-              <select required className="w-full px-3 py-2 border rounded-lg bg-white" value={formData.category_id} onChange={e => setFormData({...formData, category_id: e.target.value})}>
+              <select 
+                className={`w-full px-3 py-2 border rounded-lg bg-white ${errors.category_id ? 'border-red-500' : 'border-gray-300'}`} 
+                value={formData.category_id} 
+                onChange={e => {
+                  setFormData({...formData, category_id: e.target.value});
+                  if (errors.category_id) setErrors({...errors, category_id: ''});
+                }}
+              >
                 <option value="">Select...</option>
                 {categories.map(c => <option key={c.id} value={c.id.toString()}>{c.name}</option>)}
               </select>
+              {errors.category_id && <p className="text-xs text-red-500 mt-1">{errors.category_id}</p>}
             </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-            <textarea required className="w-full px-3 py-2 border rounded-lg" rows={3} value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} />
+            <textarea 
+              className={`w-full px-3 py-2 border rounded-lg ${errors.description ? 'border-red-500' : 'border-gray-300'}`} 
+              rows={3} 
+              value={formData.description} 
+              onChange={e => {
+                setFormData({...formData, description: e.target.value});
+                if (errors.description) setErrors({...errors, description: ''});
+              }} 
+            />
+            {errors.description && <p className="text-xs text-red-500 mt-1">{errors.description}</p>}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Total Copies</label>
             <input 
               type="number" 
               min="1" 
-              required 
-              className="w-full px-3 py-2 border rounded-lg" 
+              className={`w-full px-3 py-2 border rounded-lg ${errors.total_copies ? 'border-red-500' : 'border-gray-300'}`} 
               value={isNaN(formData.total_copies) ? '' : formData.total_copies} 
               onChange={e => {
                 const val = parseInt(e.target.value);
                 setFormData({...formData, total_copies: isNaN(val) ? 0 : val});
+                if (errors.total_copies) setErrors({...errors, total_copies: ''});
               }} 
             />
+            {errors.total_copies && <p className="text-xs text-red-500 mt-1">{errors.total_copies}</p>}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Cover Image</label>
