@@ -8,6 +8,7 @@ export interface Book {
   description: string;
   cover_url: string;
   file_url?: string;
+  total_copies: number;
   available_copies: number;
 }
 

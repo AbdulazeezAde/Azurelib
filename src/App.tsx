@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from './contexts/AuthContext';
 import { Book, Category } from './types';
-import { Search, Filter, BookOpen, LogOut, User as UserIcon, Settings, Plus, Trash2, Edit } from 'lucide-react';
+import { Search, Filter, BookOpen, LogOut, User as UserIcon, Settings, Plus, Trash2, Edit, Heart } from 'lucide-react';
+import { useWishlist } from './contexts/WishlistContext';
 import { motion } from 'motion/react';
 
 // --- Components ---
@@ -132,7 +133,7 @@ function Navbar({ currentView, onViewChange }: { currentView: string; onViewChan
 
 // --- Modals ---
 
-function AddBookModal({ isOpen, onClose, onAdd }: { isOpen: boolean; onClose: () => void; onAdd: () => void }) {
+function BookFormModal({ isOpen, onClose, onSave, editingBook }: { isOpen: boolean; onClose: () => void; onSave: () => void; editingBook: Book | null }) {
   const { token } = useAuth();
   const [categories, setCategories] = useState<Category[]>([]);
   const [formData, setFormData] = useState({
@@ -142,15 +143,42 @@ function AddBookModal({ isOpen, onClose, onAdd }: { isOpen: boolean; onClose: ()
     category_id: '',
     description: '',
     total_copies: 5,
-    cover_url: 'https://picsum.photos/seed/newbook/200/300'
+    cover_url: 'https://picsum.photos/seed/newbook/200/300',
+    file_url: ''
   });
   const [coverImage, setCoverImage] = useState<File | null>(null);
+  const [bookFile, setBookFile] = useState<File | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       fetch('/api/categories').then(res => res.json()).then(setCategories);
+      if (editingBook) {
+        setFormData({
+          title: editingBook.title,
+          author: editingBook.author,
+          isbn: editingBook.isbn || '',
+          category_id: editingBook.category_id.toString(),
+          description: editingBook.description,
+          total_copies: editingBook.total_copies,
+          cover_url: editingBook.cover_url,
+          file_url: editingBook.file_url || ''
+        });
+      } else {
+        setFormData({
+          title: '',
+          author: '',
+          isbn: '',
+          category_id: '',
+          description: '',
+          total_copies: 5,
+          cover_url: 'https://picsum.photos/seed/newbook/200/300',
+          file_url: ''
+        });
+      }
+      setCoverImage(null);
+      setBookFile(null);
     }
-  }, [isOpen]);
+  }, [isOpen, editingBook]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -162,21 +190,28 @@ function AddBookModal({ isOpen, onClose, onAdd }: { isOpen: boolean; onClose: ()
     data.append('category_id', formData.category_id);
     data.append('description', formData.description);
     data.append('total_copies', formData.total_copies.toString());
+    data.append('cover_url', formData.cover_url);
+    data.append('file_url', formData.file_url);
     
     if (coverImage) {
       data.append('coverImage', coverImage);
-    } else {
-      data.append('cover_url', formData.cover_url);
     }
 
-    await fetch('/api/books', {
-      method: 'POST',
+    if (bookFile) {
+      data.append('bookFile', bookFile);
+    }
+
+    const url = editingBook ? `/api/books/${editingBook.id}` : '/api/books';
+    const method = editingBook ? 'PUT' : 'POST';
+
+    await fetch(url, {
+      method,
       headers: { 
         Authorization: `Bearer ${token}`
       },
       body: data
     });
-    onAdd();
+    onSave();
     onClose();
   };
 
@@ -190,12 +225,12 @@ function AddBookModal({ isOpen, onClose, onAdd }: { isOpen: boolean; onClose: ()
         className="bg-white rounded-xl shadow-xl max-w-lg w-full overflow-hidden"
       >
         <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-          <h2 className="text-xl font-bold text-gray-900">Add New Book</h2>
+          <h2 className="text-xl font-bold text-gray-900">{editingBook ? 'Edit Book' : 'Add New Book'}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <LogOut className="h-5 w-5 rotate-45" />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
@@ -215,7 +250,7 @@ function AddBookModal({ isOpen, onClose, onAdd }: { isOpen: boolean; onClose: ()
               <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
               <select required className="w-full px-3 py-2 border rounded-lg bg-white" value={formData.category_id} onChange={e => setFormData({...formData, category_id: e.target.value})}>
                 <option value="">Select...</option>
-                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {categories.map(c => <option key={c.id} value={c.id.toString()}>{c.name}</option>)}
               </select>
             </div>
           </div>
@@ -224,7 +259,21 @@ function AddBookModal({ isOpen, onClose, onAdd }: { isOpen: boolean; onClose: ()
             <textarea required className="w-full px-3 py-2 border rounded-lg" rows={3} value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Cover Image (Optional)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Total Copies</label>
+            <input 
+              type="number" 
+              min="1" 
+              required 
+              className="w-full px-3 py-2 border rounded-lg" 
+              value={isNaN(formData.total_copies) ? '' : formData.total_copies} 
+              onChange={e => {
+                const val = parseInt(e.target.value);
+                setFormData({...formData, total_copies: isNaN(val) ? 0 : val});
+              }} 
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Cover Image</label>
             <input 
               type="file" 
               accept="image/*"
@@ -235,11 +284,26 @@ function AddBookModal({ isOpen, onClose, onAdd }: { isOpen: boolean; onClose: ()
                 }
               }} 
             />
-            <p className="text-xs text-gray-500 mt-1">Leave empty to use random cover</p>
+            {!editingBook && <p className="text-xs text-gray-500 mt-1">Leave empty to use random cover</p>}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Book PDF</label>
+            <input 
+              type="file" 
+              accept=".pdf"
+              className="w-full px-3 py-2 border rounded-lg"
+              onChange={e => {
+                if (e.target.files?.[0]) {
+                  setBookFile(e.target.files[0]);
+                }
+              }} 
+            />
           </div>
           <div className="flex justify-end space-x-3 pt-4">
             <button type="button" onClick={onClose} className="px-4 py-2 text-gray-600 hover:bg-gray-50 rounded-lg">Cancel</button>
-            <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Add Book</button>
+            <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+              {editingBook ? 'Update Book' : 'Add Book'}
+            </button>
           </div>
         </form>
       </motion.div>
@@ -341,42 +405,66 @@ function UserProfile() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="p-6 border-b border-gray-100">
-          <h2 className="text-lg font-semibold text-gray-900">Rental History</h2>
-        </div>
-        <div className="divide-y divide-gray-100">
-          {profile.history.map((record: any) => (
-            <div key={record.id} className="p-6 flex items-center justify-between hover:bg-gray-50">
-              <div className="flex items-center space-x-4">
-                <img src={record.cover_url} alt={record.title} className="h-16 w-12 object-cover rounded shadow-sm" referrerPolicy="no-referrer" />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-6 border-b border-gray-100">
+            <h2 className="text-lg font-semibold text-gray-900">Rental History</h2>
+          </div>
+          <div className="divide-y divide-gray-100 max-h-[500px] overflow-y-auto">
+            {profile.history.map((record: any) => (
+              <div key={record.id} className="p-6 flex items-center justify-between hover:bg-gray-50">
+                <div className="flex items-center space-x-4">
+                  <img src={record.cover_url} alt={record.title} className="h-16 w-12 object-cover rounded shadow-sm" referrerPolicy="no-referrer" />
+                  <div>
+                    <h3 className="font-medium text-gray-900">{record.title}</h3>
+                    <p className="text-sm text-gray-500">Borrowed: {new Date(record.borrow_date).toLocaleDateString()}</p>
+                    {record.return_date && (
+                      <p className="text-sm text-gray-500">Returned: {new Date(record.return_date).toLocaleDateString()}</p>
+                    )}
+                  </div>
+                </div>
                 <div>
-                  <h3 className="font-medium text-gray-900">{record.title}</h3>
-                  <p className="text-sm text-gray-500">Borrowed: {new Date(record.borrow_date).toLocaleDateString()}</p>
-                  {record.return_date && (
-                    <p className="text-sm text-gray-500">Returned: {new Date(record.return_date).toLocaleDateString()}</p>
+                  {record.status === 'borrowed' ? (
+                    <button 
+                      onClick={() => handleReturn(record.book_id)}
+                      className="px-4 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100"
+                    >
+                      Return
+                    </button>
+                  ) : (
+                    <span className="px-3 py-1 text-sm font-medium text-gray-500 bg-gray-100 rounded-full">
+                      Returned
+                    </span>
                   )}
                 </div>
               </div>
-              <div>
-                {record.status === 'borrowed' ? (
-                  <button 
-                    onClick={() => handleReturn(record.book_id)}
-                    className="px-4 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100"
-                  >
-                    Return Book
-                  </button>
-                ) : (
-                  <span className="px-3 py-1 text-sm font-medium text-gray-500 bg-gray-100 rounded-full">
-                    Returned
-                  </span>
-                )}
+            ))}
+            {profile.history.length === 0 && (
+              <div className="p-8 text-center text-gray-500">No rental history found.</div>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-6 border-b border-gray-100">
+            <h2 className="text-lg font-semibold text-gray-900">My Wishlist</h2>
+          </div>
+          <div className="divide-y divide-gray-100 max-h-[500px] overflow-y-auto">
+            {profile.wishlist.map((book: any) => (
+              <div key={book.id} className="p-6 flex items-center justify-between hover:bg-gray-50">
+                <div className="flex items-center space-x-4">
+                  <img src={book.cover_url} alt={book.title} className="h-16 w-12 object-cover rounded shadow-sm" referrerPolicy="no-referrer" />
+                  <div>
+                    <h3 className="font-medium text-gray-900">{book.title}</h3>
+                    <p className="text-sm text-gray-500">{book.author}</p>
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
-          {profile.history.length === 0 && (
-            <div className="p-8 text-center text-gray-500">No rental history found.</div>
-          )}
+            ))}
+            {profile.wishlist.length === 0 && (
+              <div className="p-8 text-center text-gray-500">Your wishlist is empty.</div>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -385,6 +473,7 @@ function UserProfile() {
 
 function BookDetailsModal({ book, onClose }: { book: Book | null; onClose: () => void }) {
   const { token, user } = useAuth();
+  const { toggleWishlist, isInWishlist } = useWishlist();
   const [message, setMessage] = useState('');
 
   if (!book) return null;
@@ -406,6 +495,8 @@ function BookDetailsModal({ book, onClose }: { book: Book | null; onClose: () =>
     }
   };
 
+  const isWishlisted = isInWishlist(book.id);
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <motion.div 
@@ -415,6 +506,17 @@ function BookDetailsModal({ book, onClose }: { book: Book | null; onClose: () =>
       >
         <div className="md:w-1/3 bg-gray-100 relative">
           <img src={book.cover_url} alt={book.title} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+          {user && (
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleWishlist(book.id);
+              }}
+              className={`absolute top-4 right-4 p-2 rounded-full shadow-md transition-colors ${isWishlisted ? 'bg-red-500 text-white' : 'bg-white text-gray-400 hover:text-red-500'}`}
+            >
+              <Heart className={`h-5 w-5 ${isWishlisted ? 'fill-current' : ''}`} />
+            </button>
+          )}
         </div>
         <div className="p-6 md:w-2/3 flex flex-col">
           <div className="flex justify-between items-start mb-4">
@@ -452,9 +554,23 @@ function BookDetailsModal({ book, onClose }: { book: Book | null; onClose: () =>
             >
               {book.available_copies > 0 ? 'Borrow Book' : 'Unavailable'}
             </button>
-            <button className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors">
-              Preview PDF
-            </button>
+            {book.file_url ? (
+              <a 
+                href={book.file_url} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors text-center"
+              >
+                Preview PDF
+              </a>
+            ) : (
+              <button 
+                disabled
+                className="flex-1 border border-gray-300 text-gray-400 py-2 rounded-lg font-medium cursor-not-allowed"
+              >
+                No PDF Available
+              </button>
+            )}
           </div>
         </div>
       </motion.div>
@@ -463,24 +579,39 @@ function BookDetailsModal({ book, onClose }: { book: Book | null; onClose: () =>
 }
 
 function BookCard({ book, onOpen }: { book: Book; onOpen: (book: Book) => void }) {
+  const { user } = useAuth();
+  const { toggleWishlist, isInWishlist } = useWishlist();
+  const isWishlisted = isInWishlist(book.id);
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow cursor-pointer"
+      className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow cursor-pointer group"
       onClick={() => onOpen(book)}
     >
       <div className="aspect-[2/3] relative bg-gray-100">
         <img 
           src={book.cover_url} 
-          alt={book.title}
-          className="w-full h-full object-cover"
+          alt={book.title} 
+          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
           referrerPolicy="no-referrer"
         />
-        <div className="absolute top-2 right-2">
+        <div className="absolute top-2 right-2 flex flex-col gap-2">
           <span className="px-2 py-1 text-xs font-medium bg-white/90 backdrop-blur-sm rounded-md shadow-sm">
             {book.category_name}
           </span>
+          {user && (
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleWishlist(book.id);
+              }}
+              className={`p-1.5 rounded-full shadow-sm transition-colors self-end ${isWishlisted ? 'bg-red-500 text-white' : 'bg-white/80 text-gray-400 hover:text-red-500'}`}
+            >
+              <Heart className={`h-4 w-4 ${isWishlisted ? 'fill-current' : ''}`} />
+            </button>
+          )}
         </div>
       </div>
       <div className="p-4">
@@ -504,7 +635,8 @@ function AdminDashboard() {
   const [stats, setStats] = useState({ users: 0, books: 0, borrows: 0 });
   const [books, setBooks] = useState<Book[]>([]);
   const [rentals, setRentals] = useState<any[]>([]);
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingBook, setEditingBook] = useState<Book | null>(null);
   const [activeTab, setActiveTab] = useState<'inventory' | 'rentals'>('inventory');
 
   const fetchBooks = () => {
@@ -538,12 +670,23 @@ function AdminDashboard() {
     setBooks(books.filter(b => b.id !== id));
   };
 
+  const handleEdit = (book: Book) => {
+    setEditingBook(book);
+    setIsModalOpen(true);
+  };
+
+  const handleAdd = () => {
+    setEditingBook(null);
+    setIsModalOpen(true);
+  };
+
   return (
     <div className="space-y-8">
-      <AddBookModal 
-        isOpen={isAddModalOpen} 
-        onClose={() => setIsAddModalOpen(false)} 
-        onAdd={fetchBooks}
+      <BookFormModal 
+        isOpen={isModalOpen} 
+        onClose={() => setIsModalOpen(false)} 
+        onSave={fetchBooks}
+        editingBook={editingBook}
       />
       
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -607,7 +750,7 @@ function AdminDashboard() {
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
               <h2 className="text-lg font-semibold text-gray-900">Book Inventory</h2>
               <button 
-                onClick={() => setIsAddModalOpen(true)}
+                onClick={handleAdd}
                 className="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
               >
                 <Plus className="h-4 w-4 mr-2" />
@@ -637,7 +780,10 @@ function AdminDashboard() {
                       </td>
                       <td className="px-6 py-4 text-gray-500">{book.available_copies}</td>
                       <td className="px-6 py-4 text-right space-x-2">
-                        <button className="text-gray-400 hover:text-indigo-600">
+                        <button 
+                          onClick={() => handleEdit(book)}
+                          className="text-gray-400 hover:text-indigo-600"
+                        >
                           <Edit className="h-4 w-4" />
                         </button>
                         <button 
@@ -740,7 +886,9 @@ function Library() {
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
         {books.map(book => (
-          <BookCard key={book.id} book={book} onOpen={setSelectedBook} />
+          <div key={book.id}>
+            <BookCard book={book} onOpen={setSelectedBook} />
+          </div>
         ))}
       </div>
       

@@ -12,10 +12,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // --- Configuration ---
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key-change-in-prod';
 const DB_PATH = path.join(process.cwd(), 'library.db');
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
+const MAX_BORROW_LIMIT = 3;
 
 // --- Database Setup ---
 const db = new Database(DB_PATH);
@@ -61,6 +62,16 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (book_id) REFERENCES books(id)
   );
+
+  CREATE TABLE IF NOT EXISTS wishlist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    book_id INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, book_id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (book_id) REFERENCES books(id)
+  );
 `);
 
 // Ensure uploads directory exists
@@ -71,7 +82,7 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 // --- Mock Data Seeding ---
 const userCount = db.prepare('SELECT count(*) as count FROM users').get() as { count: number };
 if (userCount.count === 0) {
-  console.log('Seeding mock data...');
+  console.log('Seeding initial data...');
   const salt = bcrypt.genSaltSync(10);
   const adminHash = bcrypt.hashSync('admin123', salt);
   const userHash = bcrypt.hashSync('user123', salt);
@@ -84,26 +95,7 @@ if (userCount.count === 0) {
   const insertCategory = db.prepare('INSERT INTO categories (name) VALUES (?)');
   categories.forEach(cat => insertCategory.run(cat));
 
-  const insertBook = db.prepare(`
-    INSERT INTO books (title, author, isbn, category_id, description, cover_url, total_copies, available_copies)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  // Generate 100 mock books
-  for (let i = 1; i <= 100; i++) {
-    const catId = Math.floor(Math.random() * categories.length) + 1;
-    insertBook.run(
-      `Mock Book Title ${i}`,
-      `Author ${i}`,
-      `978-0-${Math.floor(100000000 + Math.random() * 900000000)}`,
-      catId,
-      `This is a description for mock book ${i}. It covers interesting topics in ${categories[catId-1]}.`,
-      `https://picsum.photos/seed/book${i}/200/300`,
-      5,
-      5
-    );
-  }
-  console.log('Mock data seeded.');
+  console.log('Initial data seeded.');
 }
 
 // --- Express App Setup ---
@@ -212,36 +204,73 @@ app.get('/api/categories', (req, res) => {
 });
 
 // Books (Admin Write)
-app.post('/api/books', authenticateToken, requireAdmin, upload.single('coverImage'), (req, res) => {
+app.post('/api/books', authenticateToken, requireAdmin, upload.fields([
+  { name: 'coverImage', maxCount: 1 },
+  { name: 'bookFile', maxCount: 1 }
+]), (req, res) => {
   const { title, author, isbn, category_id, description, total_copies } = req.body;
   let cover_url = req.body.cover_url;
+  let file_url = null;
 
-  if (req.file) {
-    cover_url = `/uploads/${req.file.filename}`;
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+
+  if (files?.coverImage?.[0]) {
+    cover_url = `/uploads/${files.coverImage[0].filename}`;
+  }
+
+  if (files?.bookFile?.[0]) {
+    file_url = `/uploads/${files.bookFile[0].filename}`;
   }
 
   try {
     const result = db.prepare(`
-      INSERT INTO books (title, author, isbn, category_id, description, cover_url, total_copies, available_copies)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(title, author, isbn, category_id, description, cover_url, total_copies, total_copies);
+      INSERT INTO books (title, author, isbn, category_id, description, cover_url, file_url, total_copies, available_copies)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(title, author, isbn, category_id, description, cover_url, file_url, total_copies, total_copies);
     res.status(201).json({ id: result.lastInsertRowid });
   } catch (err: any) {
     res.status(400).json({ message: err.message });
   }
 });
 
-app.put('/api/books/:id', authenticateToken, requireAdmin, (req, res) => {
-  const { title, author, category_id, description, cover_url, total_copies } = req.body;
+app.put('/api/books/:id', authenticateToken, requireAdmin, upload.fields([
+  { name: 'coverImage', maxCount: 1 },
+  { name: 'bookFile', maxCount: 1 }
+]), (req, res) => {
+  const { title, author, category_id, description, total_copies } = req.body;
   const id = req.params.id;
   
-  // Simple update logic - in real app, handle copy count logic carefully
-  db.prepare(`
-    UPDATE books SET title=?, author=?, category_id=?, description=?, cover_url=?, total_copies=?
-    WHERE id=?
-  `).run(title, author, category_id, description, cover_url, total_copies, id);
-  
-  res.json({ message: 'Book updated' });
+  let cover_url = req.body.cover_url;
+  let file_url = req.body.file_url;
+
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+
+  if (files?.coverImage?.[0]) {
+    cover_url = `/uploads/${files.coverImage[0].filename}`;
+  }
+
+  if (files?.bookFile?.[0]) {
+    file_url = `/uploads/${files.bookFile[0].filename}`;
+  }
+
+  try {
+    // Get current book to calculate available_copies
+    const currentBook = db.prepare('SELECT total_copies, available_copies FROM books WHERE id = ?').get(id) as any;
+    if (!currentBook) return res.status(404).json({ message: 'Book not found' });
+
+    const diff = Number(total_copies) - currentBook.total_copies;
+    const newAvailable = Math.max(0, currentBook.available_copies + diff);
+
+    db.prepare(`
+      UPDATE books 
+      SET title = ?, author = ?, category_id = ?, description = ?, cover_url = ?, file_url = ?, total_copies = ?, available_copies = ?
+      WHERE id = ?
+    `).run(title, author, category_id, description, cover_url, file_url, total_copies, newAvailable, id);
+    
+    res.json({ message: 'Book updated' });
+  } catch (err: any) {
+    res.status(400).json({ message: err.message });
+  }
 });
 
 app.delete('/api/books/:id', authenticateToken, requireAdmin, (req, res) => {
@@ -271,7 +300,7 @@ app.get('/api/stats', authenticateToken, requireAdmin, (req, res) => {
 });
 
 // User Profile & History
-app.get('/api/profile', authenticateToken, (req, res) => {
+app.get('/api/profile', authenticateToken, (req: AuthRequest, res: Response) => {
   const userId = req.user.id;
   const user = db.prepare('SELECT id, name, email, role, created_at FROM users WHERE id = ?').get(userId);
   
@@ -283,11 +312,20 @@ app.get('/api/profile', authenticateToken, (req, res) => {
     ORDER BY br.borrow_date DESC
   `).all(userId);
 
-  res.json({ user, history });
+  const wishlist = db.prepare(`
+    SELECT b.*, c.name as category_name
+    FROM wishlist w
+    JOIN books b ON w.book_id = b.id
+    LEFT JOIN categories c ON b.category_id = c.id
+    WHERE w.user_id = ?
+    ORDER BY w.created_at DESC
+  `).all(userId);
+
+  res.json({ user, history, wishlist });
 });
 
 // Admin: All Rentals
-app.get('/api/admin/rentals', authenticateToken, requireAdmin, (req, res) => {
+app.get('/api/admin/rentals', authenticateToken, requireAdmin, (req: AuthRequest, res: Response) => {
   const rentals = db.prepare(`
     SELECT br.*, b.title, u.email as user_email, u.name as user_name
     FROM borrow_records br
@@ -298,8 +336,39 @@ app.get('/api/admin/rentals', authenticateToken, requireAdmin, (req, res) => {
   res.json(rentals);
 });
 
+// Wishlist
+app.post('/api/wishlist/:bookId', authenticateToken, (req: AuthRequest, res: Response) => {
+  const userId = req.user.id;
+  const bookId = req.params.bookId;
+
+  try {
+    db.prepare('INSERT OR IGNORE INTO wishlist (user_id, book_id) VALUES (?, ?)').run(userId, bookId);
+    res.json({ message: 'Added to wishlist' });
+  } catch (err: any) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+app.delete('/api/wishlist/:bookId', authenticateToken, (req: AuthRequest, res: Response) => {
+  const userId = req.user.id;
+  const bookId = req.params.bookId;
+
+  try {
+    db.prepare('DELETE FROM wishlist WHERE user_id = ? AND book_id = ?').run(userId, bookId);
+    res.json({ message: 'Removed from wishlist' });
+  } catch (err: any) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+app.get('/api/wishlist/ids', authenticateToken, (req: AuthRequest, res: Response) => {
+  const userId = req.user.id;
+  const ids = db.prepare('SELECT book_id FROM wishlist WHERE user_id = ?').all(userId).map((row: any) => row.book_id);
+  res.json(ids);
+});
+
 // Borrow Book
-app.post('/api/books/:id/borrow', authenticateToken, (req, res) => {
+app.post('/api/books/:id/borrow', authenticateToken, (req: AuthRequest, res: Response) => {
   const userId = req.user.id;
   const bookId = req.params.id;
 
@@ -307,6 +376,11 @@ app.post('/api/books/:id/borrow', authenticateToken, (req, res) => {
     const book = db.prepare('SELECT available_copies FROM books WHERE id = ?').get(bookId) as any;
     if (!book || book.available_copies < 1) {
       throw new Error('Book not available');
+    }
+
+    const borrowCount = db.prepare("SELECT count(*) as count FROM borrow_records WHERE user_id = ? AND status = 'borrowed'").get(userId) as any;
+    if (borrowCount.count >= MAX_BORROW_LIMIT) {
+      throw new Error(`Borrow limit reached. You are allowed to borrow a maximum of ${MAX_BORROW_LIMIT} books at a time.`);
     }
 
     const existing = db.prepare("SELECT id FROM borrow_records WHERE user_id = ? AND book_id = ? AND status = 'borrowed'").get(userId, bookId);
@@ -327,7 +401,7 @@ app.post('/api/books/:id/borrow', authenticateToken, (req, res) => {
 });
 
 // Return Book
-app.post('/api/books/:id/return', authenticateToken, (req, res) => {
+app.post('/api/books/:id/return', authenticateToken, (req: AuthRequest, res: Response) => {
   const userId = req.user.id;
   const bookId = req.params.id;
 
