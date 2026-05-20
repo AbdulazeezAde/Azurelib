@@ -38,7 +38,7 @@ The system follows a multi-tier architecture designed for Azure:
 
 ### Demo Credentials
 
-*   **Admin**: `admin@library.com` / `admin123`
+*   **Admin**: `admin@digilib.com` / `12345678`
 *   **User**: `user@library.com` / `user123`
 
 ## Azure Deployment Configuration (Simulated)

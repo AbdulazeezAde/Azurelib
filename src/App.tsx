@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from './contexts/AuthContext';
 import { Book, Category } from './types';
-import { Search, Filter, BookOpen, LogOut, User as UserIcon, Settings, Plus, Trash2, Edit, Heart } from 'lucide-react';
+import { Search, Filter, BookOpen, LogOut, User as UserIcon, Settings, Plus, Trash2, Edit, Heart, ChevronUp, ChevronDown } from 'lucide-react';
 import { useWishlist } from './contexts/WishlistContext';
 import { motion } from 'motion/react';
 
@@ -74,7 +74,7 @@ function Navbar({ currentView, onViewChange }: { currentView: string; onViewChan
         <div className="flex justify-between h-16">
           <div className="flex items-center cursor-pointer" onClick={() => onViewChange('home')}>
             <BookOpen className="h-8 w-8 text-indigo-600" />
-            <span className="ml-2 text-xl font-bold text-gray-900">AzureLib</span>
+            <span className="ml-2 text-xl font-bold text-gray-900">DigiLib</span>
           </div>
           <div className="flex items-center space-x-2">
             <button 
@@ -95,7 +95,11 @@ function Navbar({ currentView, onViewChange }: { currentView: string; onViewChan
                   onClick={() => onViewChange('profile')} 
                   className={`flex items-center px-3 py-2 rounded-md text-sm font-medium transition-colors ml-2 ${isActive('profile')}`}
                 >
-                  <UserIcon className="h-4 w-4 mr-1" />
+                  {user.avatar_url ? (
+                    <img src={user.avatar_url} alt={user.name} className="h-6 w-6 rounded-full mr-2 object-cover" />
+                  ) : (
+                    <UserIcon className="h-4 w-4 mr-2" />
+                  )}
                   {user.name}
                 </button>
                 {isAdmin && (
@@ -153,7 +157,7 @@ function BookFormModal({ isOpen, onClose, onSave, editingBook }: { isOpen: boole
   useEffect(() => {
     if (isOpen) {
       setErrors({});
-      fetch('/api/categories').then(res => res.json()).then(setCategories);
+      fetch('/api/categories').then(res => res.json()).then(data => setCategories(Array.isArray(data) ? data : []));
       if (editingBook) {
         setFormData({
           title: editingBook.title,
@@ -393,10 +397,11 @@ function Register({ onLogin }: { onLogin: () => void }) {
         body: JSON.stringify(formData)
       });
       
-      if (!res.ok) throw new Error('Registration failed');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Registration failed');
       onLogin(); // Switch to login view
-    } catch (err) {
-      setError('Registration failed. Email may already be in use.');
+    } catch (err: any) {
+      setError(err.message || 'Registration failed.');
     }
   };
 
@@ -405,7 +410,7 @@ function Register({ onLogin }: { onLogin: () => void }) {
       <div className="bg-white p-8 rounded-2xl shadow-lg border border-gray-100 w-full max-w-md">
         <div className="text-center mb-8">
           <h1 className="text-2xl font-bold text-gray-900">Create Account</h1>
-          <p className="text-gray-500">Join AzureLib today</p>
+          <p className="text-gray-500">Join DigiLib today</p>
         </div>
 
         {error && <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg">{error}</div>}
@@ -434,13 +439,14 @@ function Register({ onLogin }: { onLogin: () => void }) {
 }
 
 function UserProfile() {
-  const { token } = useAuth();
-  const [profile, setProfile] = useState<{ user: any, history: any[] } | null>(null);
+  const { token, updateUser } = useAuth();
+  const [profile, setProfile] = useState<{ user: any, history: any[], wishlist: any[] } | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const fetchProfile = () => {
     fetch('/api/profile', { headers: { Authorization: `Bearer ${token}` } })
       .then(res => res.json())
-      .then(setProfile);
+      .then(data => data && data.user ? setProfile(data) : setProfile(null));
   };
 
   useEffect(() => {
@@ -455,13 +461,56 @@ function UserProfile() {
     fetchProfile();
   };
 
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const formData = new FormData();
+      formData.append('avatar', file);
+
+      try {
+        const res = await fetch('/api/profile/avatar', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          updateUser({ avatar_url: data.avatarUrl });
+          fetchProfile(); // Refresh profile data
+        } else {
+          console.error('Failed to upload avatar');
+        }
+      } catch (err) {
+        console.error('Error uploading avatar:', err);
+      }
+    }
+  };
+
   if (!profile) return <div>Loading...</div>;
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center space-x-6">
-        <div className="h-20 w-20 bg-indigo-100 rounded-full flex items-center justify-center">
-          <UserIcon className="h-10 w-10 text-indigo-600" />
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center space-x-6 relative">
+        <div 
+          className="h-24 w-24 bg-indigo-100 rounded-full flex items-center justify-center overflow-hidden cursor-pointer group relative border-4 border-white shadow-sm"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          {profile.user.avatar_url ? (
+            <img src={profile.user.avatar_url} alt="Profile" className="h-full w-full object-cover" />
+          ) : (
+            <UserIcon className="h-12 w-12 text-indigo-600 group-hover:opacity-50 transition-opacity" />
+          )}
+          <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+            <span className="text-white text-xs font-semibold">Change</span>
+          </div>
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            className="hidden" 
+            accept="image/*" 
+            onChange={handleAvatarUpload} 
+          />
         </div>
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{profile.user.name}</h1>
@@ -558,7 +607,11 @@ function BookDetailsModal({ book, onClose }: { book: Book | null; onClose: () =>
       setMessage('Book borrowed successfully!');
       setTimeout(onClose, 1500);
     } else {
-      setMessage(data.message);
+      if (data.message && data.message.includes("Borrow limit reached")) {
+        setMessage("Oops! You have reached your active borrow limit. Please return a book before borrowing a new one.");
+      } else {
+        setMessage(data.message);
+      }
     }
   };
 
@@ -706,10 +759,36 @@ function AdminDashboard() {
   const [editingBook, setEditingBook] = useState<Book | null>(null);
   const [activeTab, setActiveTab] = useState<'inventory' | 'rentals'>('inventory');
 
+  type SortColumn = 'title' | 'author' | 'available_copies' | null;
+  type SortDirection = 'asc' | 'desc';
+  const [sortColumn, setSortColumn] = useState<SortColumn>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+
+  const handleSort = (column: SortColumn) => {
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  };
+
+  const sortedBooks = [...books].sort((a, b) => {
+    if (!sortColumn) return 0;
+    
+    // Use the actual values or default to empty string if undefined (e.g. author)
+    const valA = a[sortColumn] ?? '';
+    const valB = b[sortColumn] ?? '';
+    
+    if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+    if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+    return 0;
+  });
+
   const fetchBooks = () => {
     fetch('/api/books')
       .then(res => res.json())
-      .then(data => setBooks(data));
+      .then(data => setBooks(Array.isArray(data) ? data : []));
   };
 
   useEffect(() => {
@@ -724,7 +803,7 @@ function AdminDashboard() {
     if (activeTab === 'rentals') {
       fetch('/api/admin/rentals', { headers: { Authorization: `Bearer ${token}` } })
         .then(res => res.json())
-        .then(setRentals);
+        .then(data => setRentals(Array.isArray(data) ? data : []));
     }
   }, [token, activeTab]);
 
@@ -826,17 +905,47 @@ function AdminDashboard() {
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm text-left">
-                <thead className="bg-gray-50 text-gray-500 font-medium">
+                <thead className="bg-gray-50 text-gray-500 font-medium whitespace-nowrap">
                   <tr>
-                    <th className="px-6 py-4">Title</th>
-                    <th className="px-6 py-4">Author</th>
+                    <th 
+                      className="px-6 py-4 cursor-pointer hover:bg-gray-100 select-none"
+                      onClick={() => handleSort('title')}
+                    >
+                      <div className="flex items-center space-x-1">
+                        <span>Title</span>
+                        {sortColumn === 'title' && (
+                          sortDirection === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />
+                        )}
+                      </div>
+                    </th>
+                    <th 
+                      className="px-6 py-4 cursor-pointer hover:bg-gray-100 select-none"
+                      onClick={() => handleSort('author')}
+                    >
+                      <div className="flex items-center space-x-1">
+                        <span>Author</span>
+                        {sortColumn === 'author' && (
+                          sortDirection === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />
+                        )}
+                      </div>
+                    </th>
                     <th className="px-6 py-4">Category</th>
-                    <th className="px-6 py-4">Stock</th>
+                    <th 
+                      className="px-6 py-4 cursor-pointer hover:bg-gray-100 select-none"
+                      onClick={() => handleSort('available_copies')}
+                    >
+                      <div className="flex items-center space-x-1">
+                        <span>Stock</span>
+                        {sortColumn === 'available_copies' && (
+                          sortDirection === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />
+                        )}
+                      </div>
+                    </th>
                     <th className="px-6 py-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {books.map(book => (
+                  {sortedBooks.map(book => (
                     <tr key={book.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 font-medium text-gray-900">{book.title}</td>
                       <td className="px-6 py-4 text-gray-500">{book.author}</td>
@@ -910,7 +1019,7 @@ function Library() {
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
 
   useEffect(() => {
-    fetch('/api/categories').then(res => res.json()).then(setCategories);
+    fetch('/api/categories').then(res => res.json()).then(data => setCategories(Array.isArray(data) ? data : []));
   }, []);
 
   useEffect(() => {
@@ -918,7 +1027,7 @@ function Library() {
     if (search) params.append('search', search);
     if (selectedCategory) params.append('category', selectedCategory);
     
-    fetch(`/api/books?${params}`).then(res => res.json()).then(setBooks);
+    fetch(`/api/books?${params}`).then(res => res.json()).then(data => setBooks(Array.isArray(data) ? data : []));
   }, [search, selectedCategory]);
 
   return (
@@ -944,7 +1053,7 @@ function Library() {
             onChange={(e) => setSelectedCategory(e.target.value)}
           >
             <option value="">All Categories</option>
-            {categories.map(c => (
+            {categories?.map(c => (
               <option key={c.id} value={c.name}>{c.name}</option>
             ))}
           </select>
@@ -952,7 +1061,7 @@ function Library() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-        {books.map(book => (
+        {books?.map(book => (
           <div key={book.id}>
             <BookCard book={book} onOpen={setSelectedBook} />
           </div>
@@ -970,8 +1079,8 @@ function Library() {
 
 function Login({ onRegister }: { onRegister: () => void }) {
   const { login } = useAuth();
-  const [email, setEmail] = useState('admin@library.com');
-  const [password, setPassword] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -983,12 +1092,12 @@ function Login({ onRegister }: { onRegister: () => void }) {
         body: JSON.stringify({ email, password })
       });
       
-      if (!res.ok) throw new Error('Invalid credentials');
-      
       const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Invalid credentials');
+      
       login(data.token, data.user);
-    } catch (err) {
-      setError('Invalid email or password');
+    } catch (err: any) {
+      setError(err.message || 'Invalid email or password');
     }
   };
 

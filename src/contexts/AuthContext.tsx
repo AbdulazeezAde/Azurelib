@@ -5,6 +5,7 @@ interface User {
   email: string;
   name: string;
   role: 'admin' | 'manager' | 'user';
+  avatar_url?: string;
 }
 
 interface AuthContextType {
@@ -12,6 +13,7 @@ interface AuthContextType {
   token: string | null;
   login: (token: string, user: User) => void;
   logout: () => void;
+  updateUser: (user: Partial<User>) => void;
   isAuthenticated: boolean;
   isAdmin: boolean;
 }
@@ -45,12 +47,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   };
 
+  const updateUser = (updates: Partial<User>) => {
+    if (user) {
+      const updatedUser = { ...user, ...updates };
+      setUser(updatedUser);
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+    }
+  };
+
   return (
     <AuthContext.Provider value={{ 
       user, 
       token, 
       login, 
       logout, 
+      updateUser,
       isAuthenticated: !!user,
       isAdmin: user?.role === 'admin'
     }}>

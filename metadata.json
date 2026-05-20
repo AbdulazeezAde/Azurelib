@@ -1,5 +1,5 @@
 {
-  "name": "Azure Cloud E-Library Prototype",
-  "description": "A cloud-native e-library and inventory management system prototype designed for Azure, featuring book search, admin inventory management, and simulated cloud services.",
+  "name": "DigiLib E-Library",
+  "description": "A cloud-native e-library and inventory management system prototype, featuring book search, admin inventory management, and simulated cloud services.",
   "requestFramePermissions": []
 }
