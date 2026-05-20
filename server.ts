@@ -104,6 +104,13 @@ async function initDB() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(user_id, book_id)
       );
+
+      CREATE TABLE IF NOT EXISTS files (
+        filename VARCHAR(255) PRIMARY KEY,
+        mime_type VARCHAR(100),
+        data BYTEA,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
     `);
 
     // Add avatar_url column if it doesn't exist (if the table was created before)
@@ -161,12 +168,30 @@ const app = express();
 app.use(express.json());
 
 // Middleware for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOADS_DIR),
-  filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
-});
+const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
+const saveFileToDB = async (file: Express.Multer.File): Promise<string> => {
+  const filename = `${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+  await pool.query(
+    'INSERT INTO files (filename, mime_type, data) VALUES ($1, $2, $3)',
+    [filename, file.mimetype, file.buffer]
+  );
+  return filename;
+};
+
+app.get('/uploads/:filename', async (req, res, next) => {
+  try {
+    const result = await pool.query('SELECT mime_type, data FROM files WHERE filename = $1', [req.params.filename]);
+    if (result.rows.length > 0) {
+      res.setHeader('Content-Type', result.rows[0].mime_type);
+      return res.send(result.rows[0].data);
+    }
+  } catch (e) {
+    console.error('Error fetching file from DB:', e);
+  }
+  next(); // fallback to express.static if not found (for old local files)
+});
 app.use('/uploads', express.static(UPLOADS_DIR));
 
 // --- Auth Middleware ---
@@ -299,10 +324,12 @@ app.post('/api/books', authenticateToken, requireAdmin, upload.fields([
 
     const files = req.files as { [fieldname: string]: Express.Multer.File[] };
     if (files?.coverImage?.[0]) {
-      cover_url = `/uploads/${files.coverImage[0].filename}`;
+      const filename = await saveFileToDB(files.coverImage[0]);
+      cover_url = `/uploads/${filename}`;
     }
     if (files?.bookFile?.[0]) {
-      file_url = `/uploads/${files.bookFile[0].filename}`;
+      const filename = await saveFileToDB(files.bookFile[0]);
+      file_url = `/uploads/${filename}`;
     }
 
     const { rows } = await pool.query(`
@@ -330,10 +357,12 @@ app.put('/api/books/:id', authenticateToken, requireAdmin, upload.fields([
 
     const files = req.files as { [fieldname: string]: Express.Multer.File[] };
     if (files?.coverImage?.[0]) {
-      cover_url = `/uploads/${files.coverImage[0].filename}`;
+      const filename = await saveFileToDB(files.coverImage[0]);
+      cover_url = `/uploads/${filename}`;
     }
     if (files?.bookFile?.[0]) {
-      file_url = `/uploads/${files.bookFile[0].filename}`;
+      const filename = await saveFileToDB(files.bookFile[0]);
+      file_url = `/uploads/${filename}`;
     }
 
     const { rows } = await pool.query('SELECT total_copies, available_copies FROM books WHERE id = $1', [id]);
@@ -367,9 +396,10 @@ app.delete('/api/books/:id', authenticateToken, requireAdmin, async (req, res) =
 });
 
 // File Upload
-app.post('/api/upload', authenticateToken, requireAdmin, upload.single('file'), (req, res) => {
+app.post('/api/upload', authenticateToken, requireAdmin, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
-  const fileUrl = `/uploads/${req.file.filename}`;
+  const filename = await saveFileToDB(req.file);
+  const fileUrl = `/uploads/${filename}`;
   res.json({ url: fileUrl });
 });
 
@@ -424,7 +454,8 @@ app.post('/api/profile/avatar', authenticateToken, upload.single('avatar'), asyn
     const userId = req.user.id;
     if (!req.file) return res.status(400).json({ message: 'No image uploaded' });
 
-    const avatarUrl = `/uploads/${req.file.filename}`;
+    const filename = await saveFileToDB(req.file);
+    const avatarUrl = `/uploads/${filename}`;
     await pool.query('UPDATE users SET avatar_url = $1 WHERE id = $2', [avatarUrl, userId]);
     res.json({ message: 'Avatar updated', avatarUrl });
   } catch (err: any) {
