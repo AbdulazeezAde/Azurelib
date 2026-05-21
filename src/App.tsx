@@ -194,8 +194,10 @@ function BookFormModal({ isOpen, onClose, onSave, editingBook }: { isOpen: boole
     if (!formData.author.trim()) newErrors.author = 'Author is required';
     else if (formData.author.length < 2) newErrors.author = 'Author must be at least 2 characters';
 
+    const cleanIsbn = formData.isbn.replace(/[- ]/g, '');
     if (!formData.isbn.trim()) newErrors.isbn = 'ISBN is required';
-    else if (!/^(?=(?:\D*\d){10}(?:(?:\D*\d){3})?$)[\d-]+$/.test(formData.isbn)) newErrors.isbn = 'Invalid ISBN format (10 or 13 digits)';
+    else if (cleanIsbn.length !== 10 && cleanIsbn.length !== 13) newErrors.isbn = 'Invalid ISBN length (should be 10 or 13 digits ignoring hyphens/spaces)';
+    else if (!/^(?:\d{9}[\dX]|\d{13})$/i.test(cleanIsbn)) newErrors.isbn = 'Invalid ISBN format';
 
     if (!formData.category_id) newErrors.category_id = 'Please select a category';
 
@@ -390,6 +392,10 @@ function Register({ onLogin }: { onLogin: () => void }) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+      setError('Please enter a valid email address');
+      return;
+    }
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
@@ -1085,6 +1091,10 @@ function Login({ onRegister }: { onRegister: () => void }) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError('Please enter a valid email address');
+      return;
+    }
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
